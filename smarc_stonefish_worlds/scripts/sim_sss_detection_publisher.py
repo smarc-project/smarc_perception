@@ -5,6 +5,7 @@ import numpy as np
 from nav_msgs.msg import Odometry
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
 
 
 class sim_sss_detector:
@@ -24,6 +25,8 @@ class sim_sss_detector:
         self.pub = rospy.Publisher('/sam/sim/sidescan/detection',
                                    Detection2DArray,
                                    queue_size=2)
+        self.pub_detected_markers = rospy.Publisher(
+            '/sam/sim/sidescan/detected_markers', Marker, queue_size=2)
 
     #TODO: get things into the correct frame. marked_positions is published in map frame,
     #      dr/odom is in world_ned
@@ -54,6 +57,11 @@ class sim_sss_detector:
         )
         for marker in markers_in_range:
             if self.marker_angle_observable(heading, marker):
+                detected_marker = self.marked_positions[marker].deepcopy()
+                detected_marker.header.stamp = rospy.Time.now()
+                detected_marker.ns = f'detected_{detected_marker.ns}'
+                detected_marker.color = ColorRGBA(0, 1, 0, 1)
+                self.pub_detected_markers.publish(detected_marker)
                 print(f'\t{marker} is within detection angle!')
 
     def _get_position_differences(self, position1, position2):
