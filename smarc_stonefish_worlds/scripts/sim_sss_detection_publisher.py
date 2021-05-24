@@ -125,18 +125,23 @@ class sim_sss_detector:
         marker_pose_stamped.header.frame_id = marker.header.frame_id
         return marker_pose_stamped
 
+    def _get_distance_to_marker(self, marker):
+        """Return distance from the marker to current_pose"""
+        marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
+            marker)
+        marker_transformed = self.tf_listener.transformPose(
+            self.frame_id, marker_pose_stamped)
+
+        distance = self._calculate_distance_to_position(
+            marker_transformed.pose.position)
+        return distance
+
     def get_markers_in_detection_range(self):
         """Returns a list of markers within detection_range relative to
         self.current_pose"""
         markers_in_range = []
         for marker_name, marker in self.marked_positions.items():
-            marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
-                marker)
-            marker_transformed = self.tf_listener.transformPose(
-                self.frame_id, marker_pose_stamped)
-
-            distance = self._calculate_distance_to_position(
-                marker_transformed.pose.position)
+            distance = self._get_distance_to_marker(marker)
             if distance < self.detection_range:
                 markers_in_range.append(marker_name)
         return markers_in_range
