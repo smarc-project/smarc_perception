@@ -2,21 +2,29 @@
 
 import rospy
 import numpy as np
+import tf
 from nav_msgs.msg import Odometry
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
+from geometry_msgs.msg import PoseStamped, PointStamped
+from tf.transformations import euler_from_quaternion
+import copy
+import math
 
 
 class sim_sss_detector:
     """A mock SSS object detector for simulation. Only objects within the
     detection_range of the vehicle will be detectable."""
-    def __init__(self, detection_range=5):
+    def __init__(self, detection_range=8):
         self.detection_range = detection_range
         self.prev_pose = None
         self.current_pose = None
+        self.yaw = None
+        self.frame_id = None
         self.marked_positions = {}
 
+        self.tf_listener = tf.TransformListener()
         self.odom_sub = rospy.Subscriber('/sam/dr/odom', Odometry,
                                          self._update_pose)
         self.marked_pos_sub = rospy.Subscriber('/sam/sim/marked_positions',
@@ -28,8 +36,6 @@ class sim_sss_detector:
         self.pub_detected_markers = rospy.Publisher(
             '/sam/sim/sidescan/detected_markers', Marker, queue_size=2)
 
-    #TODO: get things into the correct frame. marked_positions is published in map frame,
-    #      dr/odom is in world_ned
     def _update_marked_positions(self, msg):
         """Update marked_positions based on the MarkerArray msg received."""
         if len(self.marked_positions) > 0:
@@ -46,23 +52,28 @@ class sim_sss_detector:
             self.prev_pose = msg.pose.pose
             self.current_pose = msg.pose.pose
 
+        self.frame_id = msg.header.frame_id
         self.prev_pose = self.current_pose
         self.current_pose = msg.pose.pose
 
         markers_in_range = self.get_markers_in_detection_range()
         heading = self.calculate_heading()
 
-        print(
-            f'{len(markers_in_range)} markers are within detection range: {markers_in_range}'
-        )
+        if len(markers_in_range) > 0:
+            print(
+                f'{len(markers_in_range)} markers are within detection range: {markers_in_range}'
+            )
         for marker in markers_in_range:
-            if self.marker_angle_observable(heading, marker):
-                detected_marker = self.marked_positions[marker].deepcopy()
+            cos, detectable = self.marker_angle_observable(heading, marker)
+
+            if detectable:
+                detected_marker = copy.deepcopy(self.marked_positions[marker])
                 detected_marker.header.stamp = rospy.Time.now()
                 detected_marker.ns = f'detected_{detected_marker.ns}'
                 detected_marker.color = ColorRGBA(0, 1, 0, 1)
+                detected_marker.lifetime.secs = 1
                 self.pub_detected_markers.publish(detected_marker)
-                print(f'\t{marker} is within detection angle!')
+                print(f'\t{marker} is within detection angle! Cos = {cos}')
 
     def _get_position_differences(self, position1, position2):
         dx = position1.x - position2.x
@@ -78,28 +89,26 @@ class sim_sss_detector:
         return position_array
 
     def calculate_heading(self):
-        """Returns a unit vector of heading based on the difference between
-        current_pose and prev_pose"""
-        if not self.prev_pose or not self.current_pose:
-            raise rospy.ROSException(
-                'Not enough odom measurement for heading calculation')
-        dx, dy, dz = self._get_position_differences(self.current_pose.position,
-                                                    self.prev_pose.position)
-        heading = np.array([dx, dy, dz]).reshape(-1, 1)
-        heading = self._normalize_vector(position_array=heading)
-
+        """Calculate a normalized heading vector using current orientation"""
+        quaternion = self.current_pose.orientation
+        (_, pitch, yaw) = euler_from_quaternion(
+            [quaternion.x, quaternion.y, quaternion.z, quaternion.w])
+        heading = np.array([
+            math.cos(yaw) * math.cos(pitch),
+            math.sin(yaw) * math.cos(pitch),
+            math.sin(pitch)
+        ]).reshape(-1, 1)
+        heading = self._normalize_vector(heading)
         return heading
 
     def _calculate_distance_to_position(self, position):
-        """Calculate the distance between current_pose.position and the
-        given position"""
+        """Calculate the distance between current_pose.position and the given position"""
         dx, dy, dz = self._get_position_differences(position,
                                                     self.current_pose.position)
         return (dx**2 + dy**2 + dz**2)**.5
 
     def _get_vec_to_position(self, position, normalized=True):
-        """Return vector from current_pose.position to the given
-        position"""
+        """Return vector from current_pose.position to the given position"""
         dx, dy, dz = self._get_position_differences(position,
                                                     self.current_pose.position)
         vec_to_position = np.array([dx, dy, dz]).reshape(-1, 1)
@@ -109,13 +118,25 @@ class sim_sss_detector:
                 position_array=vec_to_position)
         return vec_to_position
 
+    def _construct_pose_stamped_from_marker_msg(self, marker):
+        marker_pose_stamped = PoseStamped()
+        marker_pose_stamped.pose = marker.pose
+        marker_pose_stamped.header.stamp = rospy.Time.now()
+        marker_pose_stamped.header.frame_id = marker.header.frame_id
+        return marker_pose_stamped
+
     def get_markers_in_detection_range(self):
         """Returns a list of markers within detection_range relative to
         self.current_pose"""
         markers_in_range = []
         for marker_name, marker in self.marked_positions.items():
+            marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
+                marker)
+            marker_transformed = self.tf_listener.transformPose(
+                self.frame_id, marker_pose_stamped)
+
             distance = self._calculate_distance_to_position(
-                marker.pose.position)
+                marker_transformed.pose.position)
             if distance < self.detection_range:
                 markers_in_range.append(marker_name)
         return markers_in_range
@@ -124,19 +145,23 @@ class sim_sss_detector:
         """A marker is observable if the magnitude of the projection of the vector
         from self.current_pose.position onto the heading vector <= the marker's radius.
         Currently only consider buoy as markers."""
+        marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
+            self.marked_positions[marker])
+        marker_transformed = self.tf_listener.transformPose(
+            self.frame_id, marker_pose_stamped)
         vec_to_marker_position = self._get_vec_to_position(
-            self.marked_positions[marker].pose.position, normalized=True)
+            marker_transformed.pose.position, normalized=True)
         cos_heading_marker = np.dot(heading.reshape(1, -1),
                                     vec_to_marker_position.reshape(-1,
                                                                    1))[0][0]
         cos_heading_marker = abs(cos_heading_marker)
-        buoy_radius = 0.15
+        buoy_radius = 0.20
 
-        return cos_heading_marker <= buoy_radius
+        return cos_heading_marker, cos_heading_marker <= buoy_radius
 
 
 def main():
-    rospy.init_node('sim_sss_detection_publisher', anonymous=False)
+    rospy.init_node('sim_sss_detection_publisher', anonymous=True)
     rospy.Rate(5)  # ROS Rate at 5Hz
 
     detector = sim_sss_detector()
