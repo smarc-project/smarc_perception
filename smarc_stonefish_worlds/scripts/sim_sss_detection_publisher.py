@@ -33,6 +33,9 @@ class sim_sss_detector:
             return
         for marker in msg.markers:
             self.marked_positions[f'{marker.ns}/{marker.id}'] = marker
+        print(
+            f'There are {len(self.marked_positions)} number of marked positions'
+        )
 
     def _update_pose(self, msg):
         """Update prev_pose and current_pose according to the odom msg received"""
@@ -43,9 +46,15 @@ class sim_sss_detector:
         self.prev_pose = self.current_pose
         self.current_pose = msg.pose.pose
 
-        heading = self.calculate_heading()
         markers_in_range = self.get_markers_in_detection_range()
-        print(heading)
+        heading = self.calculate_heading()
+
+        print(
+            f'{len(markers_in_range)} markers are within detection range: {markers_in_range}'
+        )
+        for marker in markers_in_range:
+            if self.marker_angle_observable(heading, marker):
+                print(f'\t{marker} is within detection angle!')
 
     def _get_position_differences(self, position1, position2):
         dx = position1.x - position2.x
@@ -80,16 +89,42 @@ class sim_sss_detector:
                                                     self.current_pose.position)
         return (dx**2 + dy**2 + dz**2)**.5
 
+    def _get_vec_to_position(self, position, normalized=True):
+        """Return vector from current_pose.position to the given
+        position"""
+        dx, dy, dz = self._get_position_differences(position,
+                                                    self.current_pose.position)
+        vec_to_position = np.array([dx, dy, dz]).reshape(-1, 1)
+
+        if normalized:
+            vec_to_position = self._normalize_vector(
+                position_array=vec_to_position)
+        return vec_to_position
+
     def get_markers_in_detection_range(self):
         """Returns a list of markers within detection_range relative to
         self.current_pose"""
         markers_in_range = []
-        for marker_name, marker in self.marked_positions:
+        for marker_name, marker in self.marked_positions.items():
             distance = self._calculate_distance_to_position(
                 marker.pose.position)
             if distance < self.detection_range:
                 markers_in_range.append(marker_name)
         return markers_in_range
+
+    def marker_angle_observable(self, heading, marker):
+        """A marker is observable if the magnitude of the projection of the vector
+        from self.current_pose.position onto the heading vector <= the marker's radius.
+        Currently only consider buoy as markers."""
+        vec_to_marker_position = self._get_vec_to_position(
+            self.marked_positions[marker].pose.position, normalized=True)
+        cos_heading_marker = np.dot(heading.reshape(1, -1),
+                                    vec_to_marker_position.reshape(-1,
+                                                                   1))[0][0]
+        cos_heading_marker = abs(cos_heading_marker)
+        buoy_radius = 0.15
+
+        return cos_heading_marker <= buoy_radius
 
 
 def main():
