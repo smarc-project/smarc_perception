@@ -16,8 +16,9 @@ import math
 class sim_sss_detector:
     """A mock SSS object detector for simulation. Only objects within the
     detection_range of the vehicle will be detectable."""
-    def __init__(self, detection_range=8):
+    def __init__(self, detection_range=8, buoy_radius=0.20):
         self.detection_range = detection_range
+        self.buoy_radius = buoy_radius
         self.prev_pose = None
         self.current_pose = None
         self.yaw = None
@@ -64,16 +65,21 @@ class sim_sss_detector:
                 f'{len(markers_in_range)} markers are within detection range: {markers_in_range}'
             )
         for marker in markers_in_range:
-            cos, detectable = self.marker_angle_observable(heading, marker)
+            cos_sim = self.calculate_marker_cosine_angle(heading, marker)
+            detectable = cos_sim <= self.buoy_radius
 
             if detectable:
-                detected_marker = copy.deepcopy(self.marked_positions[marker])
-                detected_marker.header.stamp = rospy.Time.now()
-                detected_marker.ns = f'detected_{detected_marker.ns}'
-                detected_marker.color = ColorRGBA(0, 1, 0, 1)
-                detected_marker.lifetime.secs = 1
-                self.pub_detected_markers.publish(detected_marker)
-                print(f'\t{marker} is within detection angle! Cos = {cos}')
+                print(f'\t{marker} is within detection angle! Cos = {cos_sim}')
+                self._publish_marker_detection(marker)
+
+    def _publish_marker_detection(self, marker):
+        """Publish detected marker"""
+        detected_marker = copy.deepcopy(self.marked_positions[marker])
+        detected_marker.header.stamp = rospy.Time.now()
+        detected_marker.ns = f'detected_{detected_marker.ns}'
+        detected_marker.color = ColorRGBA(0, 1, 0, 1)
+        detected_marker.lifetime.secs = 1
+        self.pub_detected_markers.publish(detected_marker)
 
     def _get_position_differences(self, position1, position2):
         dx = position1.x - position2.x
@@ -146,10 +152,11 @@ class sim_sss_detector:
                 markers_in_range.append(marker_name)
         return markers_in_range
 
-    def marker_angle_observable(self, heading, marker):
-        """A marker is observable if the magnitude of the projection of the vector
-        from self.current_pose.position onto the heading vector <= the marker's radius.
-        Currently only consider buoy as markers."""
+    def calculate_marker_cosine_angle(self, heading, marker):
+        """Calculate the cosine between the heading and the marker position.
+        Used to determine whether the marker is observable:
+        A marker is observable if the magnitude of the projection of the vector
+        from self.current_pose.position onto the heading vector <= the marker's radius."""
         marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
             self.marked_positions[marker])
         marker_transformed = self.tf_listener.transformPose(
@@ -159,10 +166,7 @@ class sim_sss_detector:
         cos_heading_marker = np.dot(heading.reshape(1, -1),
                                     vec_to_marker_position.reshape(-1,
                                                                    1))[0][0]
-        cos_heading_marker = abs(cos_heading_marker)
-        buoy_radius = 0.20
-
-        return cos_heading_marker, cos_heading_marker <= buoy_radius
+        return abs(cos_heading_marker)
 
 
 def main():
