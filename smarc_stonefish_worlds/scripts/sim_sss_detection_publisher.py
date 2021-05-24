@@ -4,7 +4,7 @@ import rospy
 import numpy as np
 import tf
 from nav_msgs.msg import Odometry
-from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
+from vision_msgs.msg import ObjectHypothesisWithPose, Detection2DArray, Detection2D
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import PoseStamped, PointStamped
@@ -16,9 +16,10 @@ import math
 class sim_sss_detector:
     """A mock SSS object detector for simulation. Only objects within the
     detection_range of the vehicle will be detectable."""
-    def __init__(self, detection_range=8, buoy_radius=0.20):
+    def __init__(self, detection_range=8, buoy_radius=0.20, noise_sigma=.1):
         self.detection_range = detection_range
         self.buoy_radius = buoy_radius
+        self.noise_sigma = noise_sigma
         self.prev_pose = None
         self.current_pose = None
         self.yaw = None
@@ -31,7 +32,7 @@ class sim_sss_detector:
         self.marked_pos_sub = rospy.Subscriber('/sam/sim/marked_positions',
                                                MarkerArray,
                                                self._update_marked_positions)
-        self.pub = rospy.Publisher('/sam/sim/sidescan/detection',
+        self.pub = rospy.Publisher('/sam/sim/sidescan/detection_hypothesis',
                                    Detection2DArray,
                                    queue_size=2)
         self.pub_detected_markers = rospy.Publisher(
@@ -60,21 +61,62 @@ class sim_sss_detector:
         markers_in_range = self.get_markers_in_detection_range()
         heading = self.calculate_heading()
 
-        if len(markers_in_range) > 0:
-            print(
-                f'{len(markers_in_range)} markers are within detection range: {markers_in_range}'
-            )
         for marker in markers_in_range:
             cos_sim = self.calculate_marker_cosine_angle(heading, marker)
             detectable = cos_sim <= self.buoy_radius
 
             if detectable:
                 print(f'\t{marker} is within detection angle! Cos = {cos_sim}')
-                self._publish_marker_detection(marker)
+                self._publish_marker_detection(self.marked_positions[marker],
+                                               cos_sim)
 
-    def _publish_marker_detection(self, marker):
+    def _publish_marker_detection(self, marker, cos_sim):
         """Publish detected marker"""
-        detected_marker = copy.deepcopy(self.marked_positions[marker])
+        distance = self._get_distance_to_marker(marker)
+
+        object_hypothesis = ObjectHypothesisWithPose()
+        object_hypothesis.id = 1
+        # the higher the cos_sim (further away from 90 degree angle between current_pose
+        # and the marker), the lower the score
+        object_hypothesis.score = (-cos_sim + (self.buoy_radius * 2)) / (
+            self.buoy_radius * 2)
+
+        marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
+            marker)
+        print(self.frame_id)
+        marker_transformed = self.tf_listener.transformPose(
+            self.frame_id, marker_pose_stamped)
+        object_hypothesis.pose.pose = marker_transformed.pose
+        # Add random noise to pose of object
+        object_hypothesis.pose.pose.position.x += np.random.randn(
+        ) * self.noise_sigma
+        object_hypothesis.pose.pose.position.y += np.random.randn(
+        ) * self.noise_sigma
+        object_hypothesis.pose.pose.position.z += np.random.randn(
+        ) * self.noise_sigma
+        object_hypothesis.pose.pose.orientation.x += np.random.randn(
+        ) * self.noise_sigma
+        object_hypothesis.pose.pose.orientation.y += np.random.randn(
+        ) * self.noise_sigma
+        object_hypothesis.pose.pose.orientation.z += np.random.randn(
+        ) * self.noise_sigma
+        object_hypothesis.pose.pose.orientation.w += np.random.randn(
+        ) * self.noise_sigma
+
+        # Wrap ObjectHypothesisWithPose msg into Detection2D msg
+        detection_msg = Detection2D()
+        detection_msg.header.frame_id = self.frame_id
+        detection_msg.header.stamp = rospy.Time.now()
+        detection_msg.results.append(object_hypothesis)
+
+        # Wrap Detection2D msg into Detection2DArray msg
+        detection_array_msg = Detection2DArray()
+        detection_array_msg.header = detection_msg.header
+        detection_array_msg.detections.append(detection_msg)
+        self.pub.publish(detection_array_msg)
+
+        # Publish detection as a Marker for visualization in rviz
+        detected_marker = copy.deepcopy(marker)
         detected_marker.header.stamp = rospy.Time.now()
         detected_marker.ns = f'detected_{detected_marker.ns}'
         detected_marker.color = ColorRGBA(0, 1, 0, 1)
