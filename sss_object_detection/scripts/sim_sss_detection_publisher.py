@@ -29,6 +29,7 @@ class sim_sss_detector:
         self.current_pose = None
         self.yaw = None
         self.frame_id = None
+        self.stamp = rospy.Time.now()
         self.marked_positions = {}
 
         self.tf_listener = tf.TransformListener()
@@ -62,6 +63,7 @@ class sim_sss_detector:
             self.prev_pose = msg.pose.pose
             self.current_pose = msg.pose.pose
 
+        self.stamp = msg.header.stamp
         self.frame_id = msg.header.frame_id
         self.prev_pose = self.current_pose
         self.current_pose = msg.pose.pose
@@ -89,11 +91,7 @@ class sim_sss_detector:
         object_hypothesis.score = (-cos_sim + (self.buoy_radius * 2)) / (
             self.buoy_radius * 2)
 
-        marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
-            marker)
-        print(self.frame_id)
-        marker_transformed = self.tf_listener.transformPose(
-            self.frame_id, marker_pose_stamped)
+        marker_transformed = self._wait_for_marker_transform(marker)
         object_hypothesis.pose.pose = marker_transformed.pose
         # Add random noise to pose of object
         object_hypothesis.pose.pose.position.x += np.random.randn(
@@ -177,16 +175,23 @@ class sim_sss_detector:
     def _construct_pose_stamped_from_marker_msg(self, marker):
         marker_pose_stamped = PoseStamped()
         marker_pose_stamped.pose = marker.pose
-        marker_pose_stamped.header.stamp = rospy.Time.now()
+        marker_pose_stamped.header.stamp = self.stamp
         marker_pose_stamped.header.frame_id = marker.header.frame_id
         return marker_pose_stamped
 
-    def _get_distance_to_marker(self, marker):
-        """Return distance from the marker to current_pose"""
+    def _wait_for_marker_transform(self, marker):
         marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
             marker)
+        self.tf_listener.waitForTransform(marker_pose_stamped.header.frame_id,
+                                          self.frame_id, rospy.Time(),
+                                          rospy.Duration(1.0))
         marker_transformed = self.tf_listener.transformPose(
             self.frame_id, marker_pose_stamped)
+        return marker_transformed
+
+    def _get_distance_to_marker(self, marker):
+        """Return distance from the marker to current_pose"""
+        marker_transformed = self._wait_for_marker_transform(marker)
 
         distance = self._calculate_distance_to_position(
             marker_transformed.pose.position)
@@ -207,10 +212,9 @@ class sim_sss_detector:
         Used to determine whether the marker is observable:
         A marker is observable if the magnitude of the projection of the vector
         from self.current_pose.position onto the heading vector <= the marker's radius."""
-        marker_pose_stamped = self._construct_pose_stamped_from_marker_msg(
+        marker_transformed = self._wait_for_marker_transform(
             self.marked_positions[marker])
-        marker_transformed = self.tf_listener.transformPose(
-            self.frame_id, marker_pose_stamped)
+
         vec_to_marker_position = self._get_vec_to_position(
             marker_transformed.pose.position, normalized=True)
         cos_heading_marker = np.dot(heading.reshape(1, -1),
