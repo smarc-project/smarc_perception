@@ -16,7 +16,12 @@ import math
 class sim_sss_detector:
     """A mock SSS object detector for simulation. Only objects within the
     detection_range of the vehicle will be detectable."""
-    def __init__(self, detection_range=8, buoy_radius=0.20, noise_sigma=.1):
+    def __init__(self,
+                 robot_name,
+                 detection_range=8,
+                 buoy_radius=0.20,
+                 noise_sigma=.1):
+        self.robot_name = robot_name
         self.detection_range = detection_range
         self.buoy_radius = buoy_radius
         self.noise_sigma = noise_sigma
@@ -27,16 +32,19 @@ class sim_sss_detector:
         self.marked_positions = {}
 
         self.tf_listener = tf.TransformListener()
-        self.odom_sub = rospy.Subscriber('/sam/dr/odom', Odometry,
+        self.odom_sub = rospy.Subscriber(f'/{robot_name}/dr/odom', Odometry,
                                          self._update_pose)
-        self.marked_pos_sub = rospy.Subscriber('/sam/sim/marked_positions',
-                                               MarkerArray,
-                                               self._update_marked_positions)
-        self.pub = rospy.Publisher('/sam/sim/sidescan/detection_hypothesis',
-                                   Detection2DArray,
-                                   queue_size=2)
+        self.marked_pos_sub = rospy.Subscriber(
+            f'/{robot_name}/sim/marked_positions', MarkerArray,
+            self._update_marked_positions)
+        self.pub = rospy.Publisher(
+            f'/{robot_name}/sim/sidescan/detection_hypothesis',
+            Detection2DArray,
+            queue_size=2)
         self.pub_detected_markers = rospy.Publisher(
-            '/sam/sim/sidescan/detected_markers', Marker, queue_size=2)
+            f'/{robot_name}/sim/sidescan/detected_markers',
+            Marker,
+            queue_size=2)
 
     def _update_marked_positions(self, msg):
         """Update marked_positions based on the MarkerArray msg received."""
@@ -215,7 +223,17 @@ def main():
     rospy.init_node('sim_sss_detection_publisher', anonymous=True)
     rospy.Rate(5)  # ROS Rate at 5Hz
 
-    detector = sim_sss_detector()
+    robot_name_param = '~robot_name'
+    if rospy.has_param(robot_name_param):
+        robot_name = rospy.get_param(robot_name_param)
+        print(f'Getting robot_name = {robot_name} from param server')
+    else:
+        robot_name = 'sam'
+        print(f'{robot_name_param} param not found in param server.\n'
+              f'Setting robot_name = {robot_name} default value.')
+
+    detector = sim_sss_detector(robot_name=robot_name)
+
     while not rospy.is_shutdown():
         rospy.spin()
 
