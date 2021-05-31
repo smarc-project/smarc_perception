@@ -7,6 +7,7 @@ from smarc_msgs.msg import Sidescan
 from vision_msgs.msg import ObjectHypothesisWithPose, Detection2DArray, Detection2D
 
 from consts import ObjectID, Side
+from cpd_detector import CPDetector
 
 class sss_detector:
     def __init__(self,
@@ -20,8 +21,8 @@ class sss_detector:
             '/{}/payload/sidescan/detection_hypothesis'.format(robot_name),
             Detection2DArray, queue_size=2)
         self.pub_frame_id = '/{}/base_link'.format(robot_name)
-        # TODO: implement detectors: CPD and neural network
-        self.detector = Detector()
+        #TODO: implement neural network detector
+        self.detector = CPDetector()
 
     def _sidescan_callback(self, msg):
         channels = {Side.PORT: msg.port_channel, Side.STARBOARD:
@@ -29,8 +30,7 @@ class sss_detector:
         for channel_id, channel in channels.items():
             # TODO: normalize ping
             ping = np.array(bytearray(channel), dtype=np.ubyte)
-            # TODO: make detector.detect(ping) return
-            #       dict[ObjectID: {pos: int, confidence: float}]
+
             detection_res = self.detector.detect(ping)
 
             if ObjectID.BUOY or ObjectID.ROPE in detection_res:
