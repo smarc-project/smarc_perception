@@ -3,8 +3,10 @@
 import rospy
 import numpy as np
 from geometry_msgs.msg import Pose
+from sensor_msgs.msg import Image
 from smarc_msgs.msg import Sidescan
 from vision_msgs.msg import ObjectHypothesisWithPose, Detection2DArray, Detection2D
+from cv_bridge import CvBridge, CvBridgeError
 
 from consts import ObjectID, Side
 from cpd_detector import CPDetector
@@ -24,19 +26,65 @@ class sss_detector:
         #TODO: implement neural network detector
         self.detector = CPDetector()
 
+        # Detection visualization
+        self.bridge = CvBridge
+        self.sidescan_image = np.zeros((2000, 500, 3))
+        self.detection_image = np.zeros_like(self.sidescan_image)
+        self.sidescan_image_pub = rospy.Publisher(
+                '/{}/payload/sidescan/image'.format(robot_name),
+                Image, queue_size=2)
+        self.detection_image_pub = rospy.Publisher(
+                '/{}/payload/sidescan/detection_hypothesis_image'.format(robot_name),
+                Image, queue_size=2)
+        self.detection_colors = {ObjectID.NADIR: (255, 255, 0), #yellow
+                                 ObjectID.BUOY: (0, 0, 255), #blue
+                                 ObjectID.ROPE: (255, 0, 0) #red
+                                 }
+
+
     def _sidescan_callback(self, msg):
-        channels = {Side.PORT: msg.port_channel, Side.STARBOARD:
-                msg.starbord_channel}
+        channel_to_np = lambda channel: np.array(bytearray(channel),
+                dtype=np.ubyte)
+        channels = {Side.PORT: channel_to_np(msg.port_channel), Side.STARBOARD:
+                channel_to_np(msg.starbord_channel)}
+
+        # Update sidescan image
+        self.sidescan_image[1:, :, :] = self.sidescan_image[:-1, :]
+        self.sidescan_image[0, :, :] = np.concatenate([np.flip(channels[Side.PORT], axis=0),
+            channels[Side.STARBOARD]])
+        self.detection_image = self.sidescan_image.copy()
+
         for channel_id, channel in channels.items():
             # TODO: normalize ping
-            ping = np.array(bytearray(channel), dtype=np.ubyte)
+            ping = channel
 
             detection_res = self.detector.detect(ping)
 
-            if ObjectID.BUOY or ObjectID.ROPE in detection_res:
+            if detection_res:
+                # Publish detection message
                 detection_msg = self._construct_detection_msg(detection_res,
                         channel_id, msg.decimation, msg.header.stamp)
                 self.detection_pub.publish(detection_msg)
+
+                # Update detection image
+                self._update_detection_image(self, detection_res)
+
+        self._publish_sidescan_and_detection_images()
+
+    def _update_detection_image(self, detection_res):
+        for object_id, detection in detection_res:
+            self.detection_image[0, detection['pos'], :] = self.detection_colors[object_id]
+
+
+    def _publish_sidescan_and_detection_images(self):
+        try:
+            self.sidescan_image_pub.publish(self.bridge.cv2_to_imgmsg(self.sidescan_image,
+                "passthrough"))
+            self.detection_image_pub.publish(self.bridge.cv2_to_imgmsg(self.detection_image,
+                "passthrough"))
+        except CvBridgeError as error:
+            print('Error converting numpy array to img msg: {}'.format(error))
+
 
     def _construct_detection_msg(self, detection_res, channel_id, decimation,
             stamp):
