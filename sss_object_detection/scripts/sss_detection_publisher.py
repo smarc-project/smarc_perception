@@ -15,7 +15,7 @@ from cpd_detector import CPDetector
 
 
 class sss_detector:
-    def __init__(self, robot_name, water_depth=15, object_height=2):
+    def __init__(self, robot_name, water_depth=15, object_height=0):
         # Object height below water [m]
         self.object_height = object_height
         self.vehicle_z_pos = 0
@@ -79,13 +79,11 @@ class sss_detector:
         self.detection_image[0, :, :] = self.sidescan_image[0, :, :]
 
         for channel_id, channel in channels.items():
-            # TODO: normalize ping
             ping = channel
 
             detection_res = self.detector.detect(ping)
 
             if detection_res:
-                # Publish detection message
                 detection_msg = self._construct_detection_msg_and_update_detection_image(
                     detection_res, channel_id, msg.header.stamp)
                 if len(detection_msg.detections) > 0:
@@ -98,7 +96,7 @@ class sss_detector:
             self.sidescan_image_pub.publish(
                 self.bridge.cv2_to_imgmsg(self.sidescan_image, "passthrough"))
             self.detection_image_pub.publish(
-                self.bridge.cv2_to_imgmsg(self.detection_image, "rgb8"))
+                self.bridge.cv2_to_imgmsg(self.detection_image, "passthrough"))
         except CvBridgeError as error:
             print('Error converting numpy array to img msg: {}'.format(error))
 
@@ -132,7 +130,7 @@ class sss_detector:
                 self.detection_image[
                     0,
                     max(pos -
-                        20, 0):min(pos + 20, self.channel_size *
+                        10, 0):min(pos + 10, self.channel_size *
                                    2), :] = self.detection_colors[object_id]
 
             detection_msg.results.append(object_hypothesis)
@@ -179,8 +177,8 @@ def main():
 def parse_arg():
     parser = argparse.ArgumentParser()
     parser.add_argument('--object-height',
-                        help='Rope height under water [m]',
-                        default=2,
+                        help='Object height under water [m]',
+                        default=0,
                         type=float)
     parser.add_argument('--water-depth',
                         help='Approximate depth of the water [m]',
