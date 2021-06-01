@@ -2,6 +2,7 @@
 
 import rospy
 import numpy as np
+from std_msgs.msg import Float64
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import Image
 from smarc_msgs.msg import Sidescan
@@ -11,48 +12,70 @@ from cv_bridge import CvBridge, CvBridgeError
 from consts import ObjectID, Side
 from cpd_detector import CPDetector
 
+
 class sss_detector:
-    def __init__(self,
-                 robot_name):
+    def __init__(self, robot_name):
         # Object height below water [m]
         self.object_height = 2
+        self.vehicle_z_pos = 0
         self.robot_name = robot_name
-        self.sidescan_sub = rospy.Subscriber('/{}/payload/sidescan'.format(robot_name), Sidescan,
-                self._sidescan_callback)
+        self.sidescan_sub = rospy.Subscriber(
+            '/{}/payload/sidescan'.format(robot_name), Sidescan,
+            self._sidescan_callback)
         self.detection_pub = rospy.Publisher(
             '/{}/payload/sidescan/detection_hypothesis'.format(robot_name),
-            Detection2DArray, queue_size=2)
+            Detection2DArray,
+            queue_size=2)
         self.pub_frame_id = '/{}/base_link'.format(robot_name)
+        self.odom_sub = rospy.Subscriber('/{}/dr/odom/z'.format(robot_name),
+                                         Float64, self._update_vehicle_z_pos)
         #TODO: implement neural network detector
         self.detector = CPDetector()
+        #TODO: remove temporary hard-coded resolution value (should be read and
+        self.resolution = 0.05
+        self.channel_size = 1000
+        self.nadir_range = 15
 
         # Detection visualization
-        self.bridge = CvBridge
-        self.sidescan_image = np.zeros((2000, 500, 3))
-        self.detection_image = np.zeros_like(self.sidescan_image)
+        self.bridge = CvBridge()
+        self.sidescan_image = np.zeros((500, self.channel_size * 2, 3),
+                                       dtype=np.uint8)
+        self.detection_image = np.zeros_like(self.sidescan_image,
+                                             dtype=np.uint8)
         self.sidescan_image_pub = rospy.Publisher(
-                '/{}/payload/sidescan/image'.format(robot_name),
-                Image, queue_size=2)
+            '/{}/payload/sidescan/image'.format(robot_name),
+            Image,
+            queue_size=2)
         self.detection_image_pub = rospy.Publisher(
-                '/{}/payload/sidescan/detection_hypothesis_image'.format(robot_name),
-                Image, queue_size=2)
-        self.detection_colors = {ObjectID.NADIR: (255, 255, 0), #yellow
-                                 ObjectID.BUOY: (0, 0, 255), #blue
-                                 ObjectID.ROPE: (255, 0, 0) #red
-                                 }
+            '/{}/payload/sidescan/detection_hypothesis_image'.format(
+                robot_name),
+            Image,
+            queue_size=2)
+        self.detection_colors = {
+            ObjectID.NADIR: (255, 255, 0),  #yellow
+            ObjectID.BUOY: (0, 255, 255),  #blue
+            ObjectID.ROPE: (255, 0, 0)  #red
+        }
 
+    def _update_vehicle_z_pos(self, msg):
+        self.vehicle_z_pos = msg.data
 
     def _sidescan_callback(self, msg):
         channel_to_np = lambda channel: np.array(bytearray(channel),
-                dtype=np.ubyte)
-        channels = {Side.PORT: channel_to_np(msg.port_channel), Side.STARBOARD:
-                channel_to_np(msg.starbord_channel)}
+                                                 dtype=np.uint8)
+        channels = {
+            Side.PORT: channel_to_np(msg.port_channel),
+            Side.STARBOARD: channel_to_np(msg.starboard_channel)
+        }
 
         # Update sidescan image
-        self.sidescan_image[1:, :, :] = self.sidescan_image[:-1, :]
-        self.sidescan_image[0, :, :] = np.concatenate([np.flip(channels[Side.PORT], axis=0),
-            channels[Side.STARBOARD]])
-        self.detection_image = self.sidescan_image.copy()
+        self.sidescan_image[1:, :, :] = self.sidescan_image[:-1, :, :]
+        for i in range(3):
+            self.sidescan_image[0, :, i] = np.concatenate([
+                np.flip(channels[Side.PORT], axis=0), channels[Side.STARBOARD]
+            ])
+        self.detection_image[1:, :, :] = self.detection_image[:-1, :, :]
+        self.detection_image[0, :, :] = self.sidescan_image[0, :, :]
 
         for channel_id, channel in channels.items():
             # TODO: normalize ping
@@ -62,32 +85,38 @@ class sss_detector:
 
             if detection_res:
                 # Publish detection message
-                detection_msg = self._construct_detection_msg(detection_res,
-                        channel_id, msg.decimation, msg.header.stamp)
+                detection_msg = self._construct_detection_msg(
+                    detection_res, channel_id, msg.header.stamp)
                 self.detection_pub.publish(detection_msg)
 
                 # Update detection image
-                self._update_detection_image(self, detection_res)
+                self._update_detection_image(detection_res, channel_id)
 
         self._publish_sidescan_and_detection_images()
 
-    def _update_detection_image(self, detection_res):
-        for object_id, detection in detection_res:
-            self.detection_image[0, detection['pos'], :] = self.detection_colors[object_id]
+    def _update_detection_image(self, detection_res, channel_id):
+        if channel_id == Side.PORT:
+            multiplier = -1
+        else:
+            multiplier = 1
 
+        for object_id, detection in detection_res.items():
+            pos = self.channel_size + multiplier * detection['pos']
+            self.detection_image[
+                0,
+                max(pos - 20, 0):min(pos + 20, self.channel_size *
+                                     2), :] = self.detection_colors[object_id]
 
     def _publish_sidescan_and_detection_images(self):
         try:
-            self.sidescan_image_pub.publish(self.bridge.cv2_to_imgmsg(self.sidescan_image,
-                "passthrough"))
-            self.detection_image_pub.publish(self.bridge.cv2_to_imgmsg(self.detection_image,
-                "passthrough"))
+            self.sidescan_image_pub.publish(
+                self.bridge.cv2_to_imgmsg(self.sidescan_image, "passthrough"))
+            self.detection_image_pub.publish(
+                self.bridge.cv2_to_imgmsg(self.detection_image, "rgb8"))
         except CvBridgeError as error:
             print('Error converting numpy array to img msg: {}'.format(error))
 
-
-    def _construct_detection_msg(self, detection_res, channel_id, decimation,
-            stamp):
+    def _construct_detection_msg(self, detection_res, channel_id, stamp):
         detection_array_msg = Detection2DArray()
         detection_array_msg.header.frame_id = self.pub_frame_id
         detection_array_msg.header.stamp = stamp
@@ -97,26 +126,31 @@ class sss_detector:
             detection_msg.header = detection_array_msg.header
 
             object_hypothesis = ObjectHypothesisWithPose()
-            object_hypothesis.id = object_id
+            object_hypothesis.id = object_id.value
             object_hypothesis.score = detection['confidence']
-            object_hypothesis.pose.pose = self._detection_pos_to_pose(detection['pos'], channel_id, decimation)
+            object_hypothesis.pose.pose = self._detection_to_pose(
+                detection['pos'], channel_id)
+
+            # Filter out object detection outliers
+            if object_hypothesis.pose.pose.position.y > self.nadir_range:
+                continue
 
             detection_msg.results.append(object_hypothesis)
             detection_array_msg.detections.append(detection_msg)
         return detection_array_msg
 
-    def _detection_to_pose(self, pos, channel_id, decimation):
+    def _detection_to_pose(self, pos, channel_id):
         """Given detected pos (index in the sidescan ping), channel_id
-        (Side.PORT or Side.STARBOARD) and decimation, return the constructed
+        (Side.PORT or Side.STARBOARD) and resolution, return the constructed
         pose for the detection"""
         detected_pose = Pose()
-        hypothenus = pos * decimation
-        distance = (hypothenus**2 - self.object_height**2)**.5
+        hypothenus = pos * self.resolution
+        height_diff = self.object_height - self.vehicle_z_pos
+        distance = (hypothenus**2 - height_diff**2)**.5
         detected_pose.position.y = distance
         if channel_id == Side.PORT:
             detected_pose.position.y *= -1
         return detected_pose
-
 
 
 def main():
