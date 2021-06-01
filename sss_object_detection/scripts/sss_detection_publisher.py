@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import argparse
 import rospy
 import numpy as np
 from std_msgs.msg import Float64
@@ -14,9 +15,9 @@ from cpd_detector import CPDetector
 
 
 class sss_detector:
-    def __init__(self, robot_name):
+    def __init__(self, robot_name, water_depth=15, object_height=2):
         # Object height below water [m]
-        self.object_height = 2
+        self.object_height = object_height
         self.vehicle_z_pos = 0
         self.robot_name = robot_name
         self.sidescan_sub = rospy.Subscriber(
@@ -34,7 +35,7 @@ class sss_detector:
         #TODO: remove temporary hard-coded resolution value (should be read and
         self.resolution = 0.05
         self.channel_size = 1000
-        self.nadir_range = 15
+        self.water_depth = water_depth
 
         # Detection visualization
         self.bridge = CvBridge()
@@ -85,27 +86,12 @@ class sss_detector:
 
             if detection_res:
                 # Publish detection message
-                detection_msg = self._construct_detection_msg(
+                detection_msg = self._construct_detection_msg_and_update_detection_image(
                     detection_res, channel_id, msg.header.stamp)
-                self.detection_pub.publish(detection_msg)
-
-                # Update detection image
-                self._update_detection_image(detection_res, channel_id)
+                if len(detection_msg.detections) > 0:
+                    self.detection_pub.publish(detection_msg)
 
         self._publish_sidescan_and_detection_images()
-
-    def _update_detection_image(self, detection_res, channel_id):
-        if channel_id == Side.PORT:
-            multiplier = -1
-        else:
-            multiplier = 1
-
-        for object_id, detection in detection_res.items():
-            pos = self.channel_size + multiplier * detection['pos']
-            self.detection_image[
-                0,
-                max(pos - 20, 0):min(pos + 20, self.channel_size *
-                                     2), :] = self.detection_colors[object_id]
 
     def _publish_sidescan_and_detection_images(self):
         try:
@@ -116,7 +102,13 @@ class sss_detector:
         except CvBridgeError as error:
             print('Error converting numpy array to img msg: {}'.format(error))
 
-    def _construct_detection_msg(self, detection_res, channel_id, stamp):
+    def _construct_detection_msg_and_update_detection_image(
+            self, detection_res, channel_id, stamp):
+        if channel_id == Side.PORT:
+            multiplier = -1
+        else:
+            multiplier = 1
+
         detection_array_msg = Detection2DArray()
         detection_array_msg.header.frame_id = self.pub_frame_id
         detection_array_msg.header.stamp = stamp
@@ -132,8 +124,16 @@ class sss_detector:
                 detection['pos'], channel_id)
 
             # Filter out object detection outliers
-            if object_hypothesis.pose.pose.position.y > self.nadir_range:
+            if object_id != ObjectID.NADIR and abs(
+                    object_hypothesis.pose.pose.position.y) > self.water_depth:
                 continue
+            else:
+                pos = self.channel_size + multiplier * detection['pos']
+                self.detection_image[
+                    0,
+                    max(pos -
+                        20, 0):min(pos + 20, self.channel_size *
+                                   2), :] = self.detection_colors[object_id]
 
             detection_msg.results.append(object_hypothesis)
             detection_array_msg.detections.append(detection_msg)
@@ -154,6 +154,8 @@ class sss_detector:
 
 
 def main():
+    args = parse_arg()
+    print(args)
     rospy.init_node('sss_detection_publisher', anonymous=True)
     rospy.Rate(5)  # ROS Rate at 5Hz
 
@@ -166,10 +168,25 @@ def main():
         print('{} param not found in param server.\n'.format(robot_name_param))
         print('Setting robot_name = {} default value.'.format(robot_name))
 
-    detector = sss_detector(robot_name=robot_name)
+    detector = sss_detector(robot_name=robot_name,
+                            object_height=args.object_height,
+                            water_depth=args.water_depth)
 
     while not rospy.is_shutdown():
         rospy.spin()
+
+
+def parse_arg():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--object-height',
+                        help='Rope height under water [m]',
+                        default=2,
+                        type=float)
+    parser.add_argument('--water-depth',
+                        help='Approximate depth of the water [m]',
+                        default=15,
+                        type=float)
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
