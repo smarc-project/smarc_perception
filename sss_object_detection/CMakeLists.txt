@@ -15,6 +15,9 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   vision_msgs
   visualization_msgs
+  sensor_msgs
+  smarc_msgs
+  cv_bridge
 )
 
 ## System dependencies are found with CMake's conventions
@@ -165,6 +168,7 @@ include_directories(
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
   scripts/sim_sss_detection_publisher.py
+  scripts/sss_detection_publisher.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
