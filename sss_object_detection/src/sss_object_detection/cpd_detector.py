@@ -1,6 +1,6 @@
 import numpy as np
 import ruptures as rpt
-from consts import ObjectID
+from sss_object_detection.consts import ObjectID
 
 
 class CPDetector:
