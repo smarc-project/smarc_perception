@@ -33,17 +33,17 @@ class sim_sss_detector:
         self.marked_positions = {}
 
         self.tf_listener = tf.TransformListener()
-        self.odom_sub = rospy.Subscriber(f'/{robot_name}/dr/odom', Odometry,
+        self.odom_sub = rospy.Subscriber('/{}/dr/odom'.format(robot_name), Odometry,
                                          self._update_pose)
         self.marked_pos_sub = rospy.Subscriber(
-            f'/{robot_name}/sim/marked_positions', MarkerArray,
+            '/{}/sim/marked_positions'.format(robot_name), MarkerArray,
             self._update_marked_positions)
         self.pub = rospy.Publisher(
-            f'/{robot_name}/sim/sidescan/detection_hypothesis',
+            '/{}/sim/sidescan/detection_hypothesis'.format(robot_name),
             Detection2DArray,
             queue_size=2)
         self.pub_detected_markers = rospy.Publisher(
-            f'/{robot_name}/sim/sidescan/detected_markers',
+            '/{}/sim/sidescan/detected_markers'.format(robot_name),
             Marker,
             queue_size=2)
 
@@ -52,9 +52,9 @@ class sim_sss_detector:
         if len(self.marked_positions) > 0:
             return
         for marker in msg.markers:
-            self.marked_positions[f'{marker.ns}/{marker.id}'] = marker
+            self.marked_positions['{}/{}'.format(marker.ns, marker.id)] = marker
         print(
-            f'There are {len(self.marked_positions)} number of marked positions'
+            'There are {} number of marked positions'.format(len(self.marked_positions))
         )
 
     def _update_pose(self, msg):
@@ -76,7 +76,7 @@ class sim_sss_detector:
             detectable = cos_sim <= self.buoy_radius
 
             if detectable:
-                print(f'\t{marker} is within detection angle! Cos = {cos_sim}')
+                print('\t{} is within detection angle! Cos = {}'.format(marker, cos_sim))
                 self._publish_marker_detection(self.marked_positions[marker],
                                                cos_sim)
 
@@ -124,7 +124,7 @@ class sim_sss_detector:
         # Publish detection as a Marker for visualization in rviz
         detected_marker = copy.deepcopy(marker)
         detected_marker.header.stamp = rospy.Time.now()
-        detected_marker.ns = f'detected_{detected_marker.ns}'
+        detected_marker.ns = 'detected_{}'.format(detected_marker.ns)
         detected_marker.color = ColorRGBA(0, 1, 0, 1)
         detected_marker.lifetime.secs = 1
         self.pub_detected_markers.publish(detected_marker)
@@ -230,11 +230,11 @@ def main():
     robot_name_param = '~robot_name'
     if rospy.has_param(robot_name_param):
         robot_name = rospy.get_param(robot_name_param)
-        print(f'Getting robot_name = {robot_name} from param server')
+        print('Getting robot_name = {} from param server'.format(robot_name))
     else:
         robot_name = 'sam'
-        print(f'{robot_name_param} param not found in param server.\n'
-              f'Setting robot_name = {robot_name} default value.')
+        print('{} param not found in param server.\n'.format(robot_name_param))
+        print('Setting robot_name = {} default value.'.format(robot_name))
 
     detector = sim_sss_detector(robot_name=robot_name)
 
