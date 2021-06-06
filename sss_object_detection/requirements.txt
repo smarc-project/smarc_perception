@@ -1,0 +1,15 @@
+catkin-pkg==0.4.23
+distro==1.5.0
+docutils==0.17.1
+numpy==1.19.5
+opencv-python==4.5.2.52
+pip==21.1.1
+pyparsing==2.4.7
+python-dateutil==2.8.1
+pyyaml==5.4.1
+rospkg==1.3.0
+ruptures==1.1.3
+scipy==1.5.4
+setuptools==52.0.0
+six==1.16.0
+wheel==0.36.2
