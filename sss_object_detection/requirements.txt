@@ -1,7 +1,7 @@
 catkin-pkg==0.4.23
 distro==1.5.0
 docutils==0.17.1
-numpy==1.19.5
+numpy==1.19.4
 opencv-python==4.5.2.52
 pip==21.1.1
 pyparsing==2.4.7
