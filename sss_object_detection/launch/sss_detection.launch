@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="robot_name" default="sam"/>
+    <arg name="object_height" default="0"/>
+    <arg name="water_depth" default="15"/>
+
+    <node name="sss_object_detection" pkg="sss_object_detection" type="sss_detection_publisher.py">
+        <param name="robot_name" value="$(arg robot_name)"/>
+	<param name="object_height" value="$(arg object_height)"/>
+	<param name="water_depth" value="$(arg water_depth)"/>
+    </node>
+
+</launch>
