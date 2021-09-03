@@ -33,8 +33,8 @@ class sim_sss_detector:
         self.marked_positions = {}
 
         self.tf_listener = tf.TransformListener()
-        self.odom_sub = rospy.Subscriber('/{}/dr/odom'.format(robot_name), Odometry,
-                                         self._update_pose)
+        self.odom_sub = rospy.Subscriber('/{}/dr/odom'.format(robot_name),
+                                         Odometry, self._update_pose)
         self.marked_pos_sub = rospy.Subscriber(
             '/{}/sim/marked_positions'.format(robot_name), MarkerArray,
             self._update_marked_positions)
@@ -52,10 +52,10 @@ class sim_sss_detector:
         if len(self.marked_positions) > 0:
             return
         for marker in msg.markers:
-            self.marked_positions['{}/{}'.format(marker.ns, marker.id)] = marker
-        print(
-            'There are {} number of marked positions'.format(len(self.marked_positions))
-        )
+            self.marked_positions['{}/{}'.format(marker.ns,
+                                                 marker.id)] = marker
+        print('There are {} number of marked positions'.format(
+            len(self.marked_positions)))
 
     def _update_pose(self, msg):
         """Update prev_pose and current_pose according to the odom msg received"""
@@ -76,7 +76,8 @@ class sim_sss_detector:
             detectable = cos_sim <= self.buoy_radius
 
             if detectable:
-                print('\t{} is within detection angle! Cos = {}'.format(marker, cos_sim))
+                print('\t{} is within detection angle! Cos = {}'.format(
+                    marker, cos_sim))
                 self._publish_marker_detection(self.marked_positions[marker],
                                                cos_sim)
 
@@ -175,7 +176,7 @@ class sim_sss_detector:
     def _construct_pose_stamped_from_marker_msg(self, marker):
         marker_pose_stamped = PoseStamped()
         marker_pose_stamped.pose = marker.pose
-        marker_pose_stamped.header.stamp = self.stamp
+        marker_pose_stamped.header.stamp = rospy.Time()
         marker_pose_stamped.header.frame_id = marker.header.frame_id
         return marker_pose_stamped
 
@@ -184,7 +185,7 @@ class sim_sss_detector:
             marker)
         self.tf_listener.waitForTransform(marker_pose_stamped.header.frame_id,
                                           self.frame_id, rospy.Time(),
-                                          rospy.Duration(1.0))
+                                          rospy.Duration(2.0))
         marker_transformed = self.tf_listener.transformPose(
             self.frame_id, marker_pose_stamped)
         return marker_transformed
