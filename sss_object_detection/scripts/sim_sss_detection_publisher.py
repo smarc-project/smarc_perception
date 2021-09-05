@@ -26,14 +26,16 @@ class sim_sss_detector:
         self.detection_range = detection_range
         self.buoy_radius = buoy_radius
         self.noise_sigma = noise_sigma
-        self.frame_id = 'utm'
+        self.published_frame_id = '{}/base_link'.format(self.robot_name)
+        self.gt_frame_id = 'gt/{}/base_link'.format(self.robot_name)
         self.current_pose = None
         self.marked_positions = {}
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-        self.odom_sub = rospy.Subscriber('/{}/sim/odom'.format(robot_name),
-                                         Odometry, self._update_pose)
+        self.odom_sub = rospy.Subscriber(
+            '/{}/sim/odom'.format(self.robot_name), Odometry,
+            self._update_pose)
         self.marked_pos_sub = rospy.Subscriber(
             '/{}/sim/marked_positions'.format(robot_name), MarkerArray,
             self._update_marked_positions)
@@ -106,7 +108,7 @@ class sim_sss_detector:
 
         # Wrap ObjectHypothesisWithPose msg into Detection2D msg
         detection_msg = Detection2D()
-        detection_msg.header.frame_id = self.frame_id
+        detection_msg.header.frame_id = self.published_frame_id
         detection_msg.header.stamp = rospy.Time.now()
         detection_msg.results.append(object_hypothesis)
 
@@ -181,7 +183,7 @@ class sim_sss_detector:
 
     def _transform_pose(self, pose, from_frame):
         trans = self._wait_for_transform(from_frame=from_frame,
-                                         to_frame=self.frame_id)
+                                         to_frame=self.gt_frame_id)
         pose_transformed = tf2_geometry_msgs.do_transform_pose(pose, trans)
         return pose_transformed
 
