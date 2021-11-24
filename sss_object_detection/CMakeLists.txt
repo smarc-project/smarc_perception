@@ -169,6 +169,7 @@ include_directories(
 catkin_install_python(PROGRAMS
   scripts/sim_sss_detection_publisher.py
   scripts/sss_detection_publisher.py
+  scripts/sss_detection_listener.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
