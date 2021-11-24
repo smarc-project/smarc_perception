@@ -119,8 +119,7 @@ class SSSDetector:
                 detection['pos'], channel_id)
 
             # Filter out object detection outliers
-            if object_id != ObjectID.NADIR and abs(
-                    object_hypothesis.pose.pose.position.y) > self.water_depth:
+            if abs(object_hypothesis.pose.pose.position.y) > self.water_depth:
                 continue
             else:
                 pos = self.channel_size + multiplier * detection['pos']
