@@ -6,8 +6,8 @@ from sss_object_detection.consts import ObjectID
 class CPDetector:
     """Change point detector using window sliding for segmentation"""
     def __init__(self):
-        self.buoy_width = 15
-        self.min_mean_diff_ratio = 1.5
+        self.buoy_width = 19
+        self.min_mean_diff_ratio = 1.55
 
     def detect(self, ping):
         """Detection returns a dictionary with key being ObjectID and
@@ -16,15 +16,15 @@ class CPDetector:
         detections = {}
 
         nadir_idx = self._detect_nadir(ping)
-        # rope = self._detect_rope(ping, nadir_idx)
+        rope = self._detect_rope(ping, nadir_idx)
         buoy = self._detect_buoy(ping, nadir_idx)
 
-        # detections[ObjectID.NADIR] = {'pos': nadir_idx, 'confidence': .9}
-        #       if rope:
-        #           detections[ObjectID.ROPE] = {
-        #               'pos': rope[0][0],
-        #               'confidence': rope[1]
-        #           }
+        detections[ObjectID.NADIR] = {'pos': nadir_idx, 'confidence': .9}
+        if rope:
+            detections[ObjectID.ROPE] = {
+                'pos': rope[0][0],
+                'confidence': rope[1]
+            }
         if buoy:
             detections[ObjectID.BUOY] = {
                 'pos': buoy[0][0],
