@@ -11,12 +11,22 @@ from sss_object_detection.consts import ObjectID, Side
 from sss_object_detection.cpd_detector import CPDetector
 
 
-class SSSDetector:
+class SSSDetector_manual:
     def __init__(self, robot_name, water_depth=15, object_height=0):
         # Object height below water [m]
         self.object_height = object_height
         self.vehicle_z_pos = 0
         self.robot_name = robot_name
+        
+        #TODO: Remove hard coded detections or allow them to be specified in launch
+        # The below data is [[index of return (starting at 0), index of the detection]]
+        self.buoy_targets = [[7106, 1092], [6456, 1064],
+                             [5570, 956], [4894, 943],
+                             [4176, 956], [3506, 924],
+                             [2356, 911], [1753, 949],
+                             [1037, 941], [384, 943]]
+        # 
+        self.buoy_seq_ids = [78107, 78757, 79643, 80319, 81037, 81707, 82857, 83460, 84176, 84829]
         
         self.sidescan_sub = rospy.Subscriber(
             '/{}/payload/sidescan'.format(robot_name), Sidescan,
@@ -81,10 +91,24 @@ class SSSDetector:
         self.detection_image[1:, :, :] = self.detection_image[:-1, :, :]
         self.detection_image[0, :, :] = self.sidescan_image[0, :, :]
 
-        for channel_id, channel in channels.items():
-            ping = channel
-
-            detection_res = self.detector.detect(ping)
+        # The manual approach uses the seq ids
+        current_seq_id = msg.header.seq
+        if current_seq_id in self.buoy_seq_ids:
+            detection_index = self.buoy_seq_ids.index(current_seq_id)
+            buoy_index = self.buoy_targets[detection_index][1]
+            
+            # Find the side of the detection
+            # Find the distance of the detection
+            if buoy_index < self.channel_size:
+                channel_id = Side.PORT
+                buoy_range = buoy_index - self.channel_size -  1
+            else:
+                channel_id = Side.STARBOARD
+                buoy_range = buoy_index - self.channel_size
+                
+            detection_res = {}
+            detections[ObjectID.ROPE] = {'pos': buoy_range,
+                                         'confidence': 1.0}
 
             if detection_res:
                 detection_msg = self._construct_detection_msg_and_update_detection_image(
