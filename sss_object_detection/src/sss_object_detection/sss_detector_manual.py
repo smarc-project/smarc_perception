@@ -17,16 +17,20 @@ class SSSDetector:
         self.object_height = object_height
         self.vehicle_z_pos = 0
         self.robot_name = robot_name
+        
         self.sidescan_sub = rospy.Subscriber(
             '/{}/payload/sidescan'.format(robot_name), Sidescan,
             self._sidescan_callback)
+        
         self.detection_pub = rospy.Publisher(
             '/{}/payload/sidescan/detection_hypothesis'.format(robot_name),
             Detection2DArray,
             queue_size=2)
+        
         self.pub_frame_id = '/{}/base_link'.format(robot_name)
         self.odom_sub = rospy.Subscriber('/{}/dr/odom/z'.format(robot_name),
                                          Float64, self._update_vehicle_z_pos)
+        
         #TODO: implement neural network detector
         self.detector = CPDetector()
         #TODO: remove temporary hard-coded resolution value (should be read and
@@ -40,6 +44,8 @@ class SSSDetector:
                                        dtype=np.uint8)
         self.detection_image = np.zeros_like(self.sidescan_image,
                                              dtype=np.uint8)
+        
+        # Visualization publishers
         self.sidescan_image_pub = rospy.Publisher(
             '/{}/payload/sidescan/image'.format(robot_name),
             Image,
