@@ -2,13 +2,15 @@ import rospy
 import numpy as np
 from std_msgs.msg import Float64
 from geometry_msgs.msg import Pose
+from visualization_msgs.msg import Marker, MarkerArray
 from sensor_msgs.msg import Image
 from smarc_msgs.msg import Sidescan
 from vision_msgs.msg import ObjectHypothesisWithPose, Detection2DArray, Detection2D
 from cv_bridge import CvBridge, CvBridgeError
 
 from sss_object_detection.consts import ObjectID, Side
-from visualization_msgs.msg import Marker, MarkerArray
+
+from sss_object_detection.cpd_detector import CPDetector
 
 
 class SSSDetector_manual:
@@ -20,6 +22,7 @@ class SSSDetector_manual:
     The DA is sent in the confidence field of each detection and in the score field of the ObjectHypothesisWithPose()
     that is published.
     """
+
     def __init__(self, robot_name, water_depth=15, object_height=0):
         print('Starting manual sss detector')
         # Object height below water [m]
@@ -36,12 +39,18 @@ class SSSDetector_manual:
                              [1037, 941], [384, 943]]
 
         # there is a bug in the sss that causes the channels to get flipped
-        self.detection_flipped = [1, 1, 0, 0, 0, 0, 0, 0, 1, 1]
+        self.detection_flipped = [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
 
         #
         self.detection_seq_ids = [78107, 78757, 79643, 80319, 81037, 81707, 82857, 83460, 84176, 84829]
 
         self.buoy_associations = [3, 2, 0, 5, 4, 1, 1, 4, 3, 2]
+
+        self.flipped_regions = [[77606, 79385]]
+
+        # Real detector - CPD
+        self.detector = CPDetector()
+        self.detector_max_nadir = 125
 
         self.sidescan_sub = rospy.Subscriber(
             '/{}/payload/sidescan'.format(robot_name), Sidescan,
@@ -98,12 +107,27 @@ class SSSDetector_manual:
         self.vehicle_z_pos = msg.data
 
     def _sidescan_callback(self, msg):
-        channel_to_np = lambda channel: np.array(bytearray(channel),
-                                                 dtype=np.uint8)
-        channels = {
-            Side.PORT: channel_to_np(msg.port_channel),
-            Side.STARBOARD: channel_to_np(msg.starboard_channel)
-        }
+
+        # Check if the channels need to flipped
+        flip_channels = False
+        seq_id = msg.header.seq
+        if self.flipped_regions is not None and len(self.flipped_regions) > 0:
+            for region in self.flipped_regions:
+                if region[0] <= seq_id <= region[1]:
+                    flip_channels = True
+                    break
+
+        # Unpack the channel data from the msg, and flip if needed
+        if flip_channels:
+            channels = {
+                Side.PORT: np.array(bytearray(msg.starboard_channel), dtype=np.uint8),
+                Side.STARBOARD: np.array(bytearray(msg.port_channel), dtype=np.uint8)
+            }
+        else:
+            channels = {
+                Side.PORT: np.array(bytearray(msg.port_channel), dtype=np.uint8),
+                Side.STARBOARD: np.array(bytearray(msg.starboard_channel), dtype=np.uint8)
+            }
 
         # Update sidescan image
         self.sidescan_image[1:, :, :] = self.sidescan_image[:-1, :, :]
@@ -113,6 +137,8 @@ class SSSDetector_manual:
             ])
         self.detection_image[1:, :, :] = self.detection_image[:-1, :, :]
         self.detection_image[0, :, :] = self.sidescan_image[0, :, :]
+
+        # TODO: I want to combine the detections into a hybrid of cbd and manual
 
         # The manual approach uses the seq ids
         current_seq_id = msg.header.seq
@@ -145,15 +171,30 @@ class SSSDetector_manual:
             detection_res = {ObjectID.BUOY: {'pos': buoy_range,
                                              'confidence': buoy_da}}
 
-
             detection_msg = self._construct_detection_msg_and_update_detection_image(
                 detection_res, channel_id, msg.header.stamp)
             if len(detection_msg.detections) > 0:
                 print(f'Publishing detection - {current_seq_id}')
                 self._publish_detection_marker(detection_msg, msg.header)
                 self.detection_pub.publish(detection_msg)
+        else:
+            # Find the nadir
+            detected_nadir_ind = self.detector.detect_nadir(channels[Side.PORT],
+                                                            channels[Side.STARBOARD])
+
+            detection_limit_ind = min(detected_nadir_ind, self.detector_max_nadir)
+
+            for channel_id, channel in channels.items():
+                ping = channel
+                detection_res = self.detector.detect_rope(ping, detection_limit_ind)
+                if detection_res:
+                    detection_msg = self._construct_detection_msg_and_update_detection_image(
+                        detection_res, channel_id, msg.header.stamp)
+                    if len(detection_msg.detections) > 0:
+                        self.detection_pub.publish(detection_msg)
 
         self._publish_sidescan_and_detection_images()
+
     def _publish_detection_marker(self, detection_message, message_header):
         if len(detection_message.detections) == 0:
             return
