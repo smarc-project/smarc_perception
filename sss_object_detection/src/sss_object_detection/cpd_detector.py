@@ -5,9 +5,10 @@ from sss_object_detection.consts import ObjectID
 
 class CPDetector:
     """Change point detector using window sliding for segmentation"""
-    def __init__(self):
-        self.buoy_width = 19
-        self.min_mean_diff_ratio = 1.55
+
+    def __init__(self, buoy_width=19, min_mean_diff_ratio=1.55):
+        self.buoy_width = buoy_width
+        self.min_mean_diff_ratio = min_mean_diff_ratio
 
     def detect(self, ping):
         """Detection returns a dictionary with key being ObjectID and
@@ -44,6 +45,29 @@ class CPDetector:
             detections[ObjectID.ROPE] = {
                 'pos': rope[0][0],
                 'confidence': rope[1]
+            }
+
+        return detections
+
+    def detect_rope_buoy(self, ping, max_idx=150):
+        """Detection returns a dictionary with key being ObjectID and
+        value being a dictionary of position and confidence of the
+        detection."""
+        detections = {}
+
+        rope = self._detect_rope(ping, max_idx)
+        buoy = self._detect_buoy(ping, max_idx)
+
+        if rope:
+            detections[ObjectID.ROPE] = {
+                'pos': rope[0][0],
+                'confidence': rope[1]
+            }
+
+        if buoy:
+            detections[ObjectID.BUOY] = {
+                'pos': buoy[0][0],
+                'confidence': buoy[1]
             }
 
         return detections
@@ -94,8 +118,11 @@ class CPDetector:
                                                  n_bkps=n_bkps)
 
         # Check whether the segmentation is likely to be a buoy
-        if bkps[1] - bkps[0] > self.buoy_width * 2 or bkps[1] - bkps[
-                0] < self.buoy_width * .5:
+        if len(bkps) < 2:
+            print("CPD failed to detect at least two change points")
+            return None
+
+        if bkps[1] - bkps[0] > self.buoy_width * 2 or bkps[1] - bkps[0] < self.buoy_width * .5:
             return None
         mean_diff_ratio = self._compare_region_with_surrounding(ping, bkps)
 

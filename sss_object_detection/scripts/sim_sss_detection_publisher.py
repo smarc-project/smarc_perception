@@ -81,7 +81,7 @@ class sim_sss_detector:
         distance = self._get_distance_to_marker(marker)
 
         object_hypothesis = ObjectHypothesisWithPose()
-        object_hypothesis.id = 1
+        object_hypothesis.id = 2  # 2 indicates a buoy, was 1 which indicates a rope
         # the higher the cos_sim (further away from 90 degree angle between current_pose
         # and the marker), the lower the score
         object_hypothesis.score = (-cos_sim + (self.buoy_radius * 2)) / (

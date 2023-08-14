@@ -1,3 +1,4 @@
+import os
 import rospy
 import numpy as np
 from std_msgs.msg import Float64
@@ -12,7 +13,7 @@ from sss_object_detection.consts import ObjectID, Side
 from sss_object_detection.cpd_detector import CPDetector
 
 
-class SSSDetector_manual:
+class SSSDetector_image_proc:
     """
     Class that provides manually determined detections as well as data associations if they are provided
     Detections were determined by visual examination of the sss data and the terminating jounction of each rope section
@@ -22,29 +23,48 @@ class SSSDetector_manual:
     that is published.
     """
 
-    def __init__(self, robot_name, water_depth=15, object_height=0):
-        print('Starting manual sss detector')
+    def __init__(self, robot_name, water_depth=15, object_height=0,
+                 buoy_path=None, rope_port_path=None, rope_star_path=None):
+        print('Starting image processing sss detector')
+        print("Processing is currently done offline!")
         # Object height below water [m]
         self.object_height = object_height
         self.vehicle_z_pos = 0
         self.robot_name = robot_name
 
+        # TODO: currently changing to work with new image processing detections
+        # This is one of the output files from the image processing script.
+        # It is formatted as an array with the following columns [ orig index | seq ID | orig cross index ]
+        self.buoy_detections = np.genfromtxt(buoy_path, delimiter=',').astype(int)
+
+        if rope_port_path is not None and os.path.exists(rope_port_path):
+            self.rope_port_detections = np.genfromtxt(rope_port_path, delimiter=',').astype(int)
+            self.use_rope_port = True
+        else:
+            self.use_rope_port = False
+
+        if rope_star_path is not None and os.path.exists(rope_star_path):
+            self.rope_star_detections = np.genfromtxt(rope_star_path, delimiter=',').astype(int)
+            self.use_rope_star = True
+        else:
+            self.use_rope_star = False
+
         # TODO: Remove hard coded detections or allow them to be specified in launch
         # The below data is [[index of return (starting at 0), index of the detection]]
-        self.buoy_targets = [[7106, 1092], [6456, 1064],
-                             [5570, 956], [4894, 943],
-                             [4176, 956], [3506, 924],
-                             [2356, 911], [1753, 949],
-                             [1037, 941], [384, 943]]
+        # self.buoy_targets = [[7106, 1092], [6456, 1064],
+        #                      [5570, 956], [4894, 943],
+        #                      [4176, 956], [3506, 924],
+        #                      [2356, 911], [1753, 949],
+        #                      [1037, 941], [384, 943]]
 
         # there is a bug in the sss that causes the channels to get flipped
-        self.detection_flipped = [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+        # self.detection_flipped = [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
 
-        #
-        self.detection_seq_ids = [78107, 78757, 79643, 80319, 81037, 81707, 82857, 83460, 84176, 84829]
+        # self.detection_seq_ids = [78107, 78757, 79643, 80319, 81037, 81707, 82857, 83460, 84176, 84829]
 
-        self.buoy_associations = [3, 2, 0, 5, 4, 1, 1, 4, 3, 2]
+        # self.buoy_associations = [3, 2, 0, 5, 4, 1, 1, 4, 3, 2]
 
+        # This is still needed as the rad SSS data needs to be flipped for the visualization
         self.flipped_regions = [[77606, 79385]]
 
         self.channels_to_detect = [Side.PORT]
@@ -143,59 +163,97 @@ class SSSDetector_manual:
 
         # The manual approach uses the seq ids
         current_seq_id = msg.header.seq
-        if current_seq_id in self.detection_seq_ids:
-            print(f'Manual detection - {current_seq_id}')
-            detection_index = self.detection_seq_ids.index(current_seq_id)
-            buoy_index = self.buoy_targets[detection_index][1]
+        if current_seq_id in self.buoy_detections[:, 1]:
+
+            detection_index = np.where(self.buoy_detections[:, 1] == current_seq_id)[0][0]
+            print(f'IMG PROC BUOY DETECTION - Seq ID: {current_seq_id}  detection index: {detection_index}')
+            buoy_index = self.buoy_detections[detection_index, 2]
 
             # Find the side of the detection
             # Find the distance of the detection
             if buoy_index < self.channel_size:
                 # Handle the direction taking into account the sss channel flipping bug
-                if self.detection_flipped[detection_index]:
-                    channel_id = Side.STARBOARD
-                else:
-                    channel_id = Side.PORT
-
+                # if self.detection_flipped[detection_index]:
+                #     channel_id = Side.STARBOARD
+                # else:
+                #     channel_id = Side.PORT
+                channel_id = Side.PORT
                 buoy_range = self.channel_size - 1 - buoy_index
             else:
                 # Handle the direction taking into account the sss channel flipping bug
-                if self.detection_flipped[detection_index]:
-                    channel_id = Side.PORT
-                else:
-                    channel_id = Side.STARBOARD
+                # if self.detection_flipped[detection_index]:
+                #     channel_id = Side.PORT
+                # else:
+                #     channel_id = Side.STARBOARD
 
+                channel_id = Side.STARBOARD
                 buoy_range = buoy_index - self.channel_size
 
-            buoy_da = self.buoy_associations[detection_index]
+            # Manual associations,
+            # buoy_da = self.buoy_associations[detection_index]
 
+            # TODO check how confidence is used by the graph builder
+            # Setting confidence to -ObjectID.BUOY.value will force data association
             detection_res = {ObjectID.BUOY: {'pos': buoy_range,
-                                             'confidence': buoy_da}}
+                                             'confidence': -ObjectID.BUOY.value}}
 
             detection_msg = self._construct_detection_msg_and_update_detection_image(
                 detection_res, channel_id, msg.header.stamp)
             if len(detection_msg.detections) > 0:
-                print(f'Publishing detection - {current_seq_id}')
+                print(f'Publishing buoy detection - {current_seq_id}')
                 self._publish_detection_marker(detection_msg, msg.header)
                 self.detection_pub.publish(detection_msg)
 
         # Perform rope detections when no buoy is detected
         else:
-            # Find the nadir
-            detected_nadir_ind = self.detector.detect_nadir(channels[Side.PORT],
-                                                            channels[Side.STARBOARD])
+            # # Find the nadir
+            # detected_nadir_ind = self.detector.detect_nadir(channels[Side.PORT],
+            #                                                 channels[Side.STARBOARD])
+            #
+            # detection_limit_ind = min(detected_nadir_ind, self.detector_max_nadir)
+            #
+            # for channel_id, channel in channels.items():
+            #     if channel_id in self.channels_to_detect:
+            #         ping = channel
+            #         detection_res = self.detector.detect_rope(ping, detection_limit_ind)
+            #         if detection_res:
+            #             detection_msg = self._construct_detection_msg_and_update_detection_image(
+            #                 detection_res, channel_id, msg.header.stamp)
+            #             if len(detection_msg.detections) > 0:
+            #                 self.detection_pub.publish(detection_msg)
 
-            detection_limit_ind = min(detected_nadir_ind, self.detector_max_nadir)
+            # TODO use img process rope detector instead of cpd
+            # PORT
+            if self.use_rope_port:
+                if current_seq_id in self.rope_port_detections[:, 1]:
+                    detection_index = np.where(self.rope_port_detections[:, 1] == current_seq_id)[0][0]
+                    rope_index = self.rope_port_detections[detection_index, 2]
+                    channel_id = Side.PORT
+                    detection_res = {ObjectID.ROPE: {
+                        'pos': rope_index,
+                        'confidence': 0.5
+                    }}
 
-            for channel_id, channel in channels.items():
-                if channel_id in self.channels_to_detect:
-                    ping = channel
-                    detection_res = self.detector.detect_rope(ping, detection_limit_ind)
-                    if detection_res:
-                        detection_msg = self._construct_detection_msg_and_update_detection_image(
-                            detection_res, channel_id, msg.header.stamp)
-                        if len(detection_msg.detections) > 0:
-                            self.detection_pub.publish(detection_msg)
+                    detection_msg = self._construct_detection_msg_and_update_detection_image(
+                        detection_res, channel_id, msg.header.stamp)
+                    if len(detection_msg.detections) > 0:
+                        self.detection_pub.publish(detection_msg)
+
+            # STARBOARD
+            if self.use_rope_star:
+                if current_seq_id in self.rope_star_detections[:, 1]:
+                    detection_index = np.where(self.rope_star_detections[:, 1] == current_seq_id)[0][0]
+                    rope_index = self.rope_star_detections[detection_index, 2]
+                    channel_id = Side.STARBOARD
+                    detection_res = {ObjectID.ROPE: {
+                        'pos': rope_index,
+                        'confidence': 0.5
+                    }}
+
+                    detection_msg = self._construct_detection_msg_and_update_detection_image(
+                        detection_res, channel_id, msg.header.stamp)
+                    if len(detection_msg.detections) > 0:
+                        self.detection_pub.publish(detection_msg)
 
         self._publish_sidescan_and_detection_images()
 
@@ -262,18 +320,22 @@ class SSSDetector_manual:
             object_hypothesis = ObjectHypothesisWithPose()
             object_hypothesis.id = object_id.value
             object_hypothesis.score = detection['confidence']
-            object_hypothesis.pose.pose = self._detection_to_pose(detection['pos'], channel_id)
+            detection_pose = self._detection_to_pose(detection['pos'], channel_id)
+
+            # Catch Error
+            if detection_pose is None:
+                continue
+            else:
+                object_hypothesis.pose.pose = detection_pose
 
             # Filter out object detection outliers
             if abs(object_hypothesis.pose.pose.position.y) > self.water_depth:
                 continue
             else:
                 pos = self.channel_size + multiplier * detection['pos']
-                self.detection_image[
-                0,
-                max(pos -
-                    10, 0):min(pos + 10, self.channel_size *
-                               2), :] = self.detection_colors[object_id]
+                # Debug
+                # print(f'pos: {pos}')
+                self.detection_image[0, max(pos - 10, 0):min(pos + 10, self.channel_size * 2), :] = self.detection_colors[object_id]
 
             detection_msg.results.append(object_hypothesis)
             detection_array_msg.detections.append(detection_msg)
@@ -284,11 +346,16 @@ class SSSDetector_manual:
         (Side.PORT or Side.STARBOARD) and resolution, return the constructed
         pose for the detection"""
         detected_pose = Pose()
-        hypothenus = pos * self.resolution
+        hypotenuse = pos * self.resolution
         height_diff = self.object_height - self.vehicle_z_pos
-        distance = (hypothenus ** 2 - height_diff ** 2) ** .5
+
+        if abs(hypotenuse) <= abs(height_diff):
+            print("DETECTION IGNORED: hypotenuse < height difference")
+            return None
+
+        distance = (hypotenuse ** 2 - height_diff ** 2) ** .5
         detected_pose.position.y = distance
-        # base link point forward snd left
+        # base link point forward and left
         if channel_id == Side.STARBOARD:
             detected_pose.position.y *= -1
         return detected_pose
