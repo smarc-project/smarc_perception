@@ -28,7 +28,8 @@ class SSSDetector_image_proc:
         print('Starting image processing sss detector')
         print("Processing is currently done offline!")
         # Object height below water [m]
-        self.object_height = object_height
+        self.object_depth = object_height  # object_height
+        self.buoy_depth = 0
         self.vehicle_z_pos = 0
         self.robot_name = robot_name
 
@@ -198,7 +199,7 @@ class SSSDetector_image_proc:
                                              'confidence': -ObjectID.BUOY.value}}
 
             detection_msg = self._construct_detection_msg_and_update_detection_image(
-                detection_res, channel_id, msg.header.stamp)
+                detection_res, channel_id, msg.header.stamp, detection_type=ObjectID.BUOY)
             if len(detection_msg.detections) > 0:
                 print(f'Publishing buoy detection - {current_seq_id}')
                 self._publish_detection_marker(detection_msg, msg.header)
@@ -235,7 +236,7 @@ class SSSDetector_image_proc:
                     }}
 
                     detection_msg = self._construct_detection_msg_and_update_detection_image(
-                        detection_res, channel_id, msg.header.stamp)
+                        detection_res, channel_id, msg.header.stamp, detection_type=ObjectID.ROPE)
                     if len(detection_msg.detections) > 0:
                         self.detection_pub.publish(detection_msg)
 
@@ -251,7 +252,7 @@ class SSSDetector_image_proc:
                     }}
 
                     detection_msg = self._construct_detection_msg_and_update_detection_image(
-                        detection_res, channel_id, msg.header.stamp)
+                        detection_res, channel_id, msg.header.stamp, detection_type=ObjectID.ROPE)
                     if len(detection_msg.detections) > 0:
                         self.detection_pub.publish(detection_msg)
 
@@ -302,14 +303,17 @@ class SSSDetector_image_proc:
             print('Error converting numpy array to img msg: {}'.format(error))
 
     def _construct_detection_msg_and_update_detection_image(
-            self, detection_res, channel_id, stamp):
+            self, detection_res, channel_id, stamp, detection_type):
+
+        if detection_type not in list(ObjectID):
+            return Detection2DArray()
+
         if channel_id == Side.PORT:
             multiplier = -1
         else:
             multiplier = 1
 
         detection_array_msg = Detection2DArray()
-        # TODO: Check that this is the proper frame, base_link != SSS frame
         detection_array_msg.header.frame_id = self.pub_frame_id
         detection_array_msg.header.stamp = stamp
 
@@ -320,7 +324,7 @@ class SSSDetector_image_proc:
             object_hypothesis = ObjectHypothesisWithPose()
             object_hypothesis.id = object_id.value
             object_hypothesis.score = detection['confidence']
-            detection_pose = self._detection_to_pose(detection['pos'], channel_id)
+            detection_pose = self._detection_to_pose(detection['pos'], channel_id, detection_type)
 
             # Catch Error
             if detection_pose is None:
@@ -333,27 +337,77 @@ class SSSDetector_image_proc:
                 continue
             else:
                 pos = self.channel_size + multiplier * detection['pos']
-                # Debug
-                # print(f'pos: {pos}')
-                self.detection_image[0, max(pos - 10, 0):min(pos + 10, self.channel_size * 2), :] = self.detection_colors[object_id]
+
+                # Mark detection image with the detections
+                color = self.detection_colors[object_id]
+                if object_id == ObjectID.BUOY:
+                    thickness = 5
+                else:
+                    thickness = 1
+                self.detection_image[0:thickness, max(pos - 10, 0):min(pos + 10, self.channel_size * 2), :] = color
 
             detection_msg.results.append(object_hypothesis)
             detection_array_msg.detections.append(detection_msg)
         return detection_array_msg
 
-    def _detection_to_pose(self, pos, channel_id):
-        """Given detected pos (index in the sidescan ping), channel_id
-        (Side.PORT or Side.STARBOARD) and resolution, return the constructed
-        pose for the detection"""
+    def _detection_to_pose(self, pos, channel_id, detection_type):
+        """Given detected pos (index in the sidescan ping),
+        channel_id (Side.PORT or Side.STARBOARD) and resolution,
+        type: rope or buoy, determines assumed depth
+        return the constructed pose for the detection"""
+
+        # NOTE: The rope detection allowance is currently not being used as it was cause issues with the detections that
+        # were being added.
+
+        # rope leeway allows the detected distance to be less than the height difference
+        #leeway_ratio = 0.05
         detected_pose = Pose()
         hypotenuse = pos * self.resolution
-        height_diff = self.object_height - self.vehicle_z_pos
 
+        # Adjust assumed depth of target based on type of detection
+        if detection_type == ObjectID.BUOY:
+            target_depth = self.buoy_depth
+        else:
+            target_depth = self.object_depth
+
+        height_diff = target_depth - self.vehicle_z_pos
+
+        # Check for distance errors
+        # For ropes allow some leeway
+        # if height_diff == 0:
+        #     height_diff_ratio = 1
+        # else:
+        #     height_diff_ratio = (hypotenuse-height_diff)/height_diff
+        #
+        # if self.vehicle_z_pos > target_depth:
+        #     height_diff_ratio = 1  # Only make allowances if the SAM is above the target
+
+        # Allowance case
+        # if detection_type == ObjectID.ROPE and 0 >= height_diff_ratio >= -abs(leeway_ratio):
+        #     print(f"DETECTION ALLOWANCE: {detection_type}\n"
+        #           f"Current depth: {self.vehicle_z_pos}\n"
+        #           f"Target depth: {target_depth}\n"
+        #           f"Height difference: {height_diff}\n"
+        #           f"Hypotenuse: {hypotenuse}")
+        #
+        #     distance = 0
+        #
+        #     return None
+
+        # Error case - will prevent detection
         if abs(hypotenuse) <= abs(height_diff):
-            print("DETECTION IGNORED: hypotenuse < height difference")
+            print(f"DETECTION ERROR: {detection_type}\n"
+                  f"Hypotenuse < height difference\n"
+                  f"Current depth: {self.vehicle_z_pos}\n"
+                  f"Target depth: {target_depth}\n"
+                  f"Height difference: {height_diff}\n"
+                  f"Hypotenuse: {hypotenuse}")
+
             return None
 
-        distance = (hypotenuse ** 2 - height_diff ** 2) ** .5
+        else:
+            distance = (hypotenuse ** 2 - height_diff ** 2) ** .5
+
         detected_pose.position.y = distance
         # base link point forward and left
         if channel_id == Side.STARBOARD:
