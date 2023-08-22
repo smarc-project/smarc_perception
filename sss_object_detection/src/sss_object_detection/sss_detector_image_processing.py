@@ -396,12 +396,12 @@ class SSSDetector_image_proc:
 
         # Error case - will prevent detection
         if abs(hypotenuse) <= abs(height_diff):
-            print(f"DETECTION ERROR: {detection_type}\n"
-                  f"Hypotenuse < height difference\n"
-                  f"Current depth: {self.vehicle_z_pos}\n"
-                  f"Target depth: {target_depth}\n"
-                  f"Height difference: {height_diff}\n"
-                  f"Hypotenuse: {hypotenuse}")
+            # print(f"DETECTION ERROR: {detection_type}\n"
+            #       f"Hypotenuse < height difference\n"
+            #       f"Current depth: {self.vehicle_z_pos}\n"
+            #       f"Target depth: {target_depth}\n"
+            #       f"Height difference: {height_diff}\n"
+            #       f"Hypotenuse: {hypotenuse}")
 
             return None
 
