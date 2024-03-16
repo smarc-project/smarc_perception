@@ -15,12 +15,8 @@ from sss_object_detection.cpd_detector import CPDetector
 
 class SSSDetector_image_proc:
     """
-    Class that provides manually determined detections as well as data associations if they are provided
-    Detections were determined by visual examination of the sss data and the terminating jounction of each rope section
-    was selected.
-
-    The DA is sent in the confidence field of each detection and in the score field of the ObjectHypothesisWithPose()
-    that is published.
+    Class for using offline rope and buoy detections formed by sss_real_image_process.py
+    Some values of the Detection2DArray() are a little abused
     """
 
     def __init__(self, robot_name, water_depth=15, object_height=0,
@@ -32,6 +28,7 @@ class SSSDetector_image_proc:
         self.buoy_depth = 0
         self.vehicle_z_pos = 0
         self.robot_name = robot_name
+        self.detector_seq_id_as_score = rospy.get_param('detector_seq_id_as_score', False)
 
         # TODO: currently changing to work with new image processing detections
         # This is one of the output files from the image processing script.
@@ -198,8 +195,22 @@ class SSSDetector_image_proc:
             detection_res = {ObjectID.BUOY: {'pos': buoy_range,
                                              'confidence': -ObjectID.BUOY.value}}
 
-            detection_msg = self._construct_detection_msg_and_update_detection_image(
-                detection_res, channel_id, msg.header.stamp, detection_type=ObjectID.BUOY)
+            # Construct buoy detection message
+            if self.detector_seq_id_as_score:
+                detection_msg = self._construct_detection_msg_and_update_detection_image(
+                    detection_res=detection_res,
+                    channel_id=channel_id,
+                    stamp=msg.header.stamp,
+                    detection_type=ObjectID.BUOY,
+                    seq_id=current_seq_id)
+            else:
+                detection_msg = self._construct_detection_msg_and_update_detection_image(
+                    detection_res=detection_res,
+                    channel_id=channel_id,
+                    stamp=msg.header.stamp,
+                    detection_type=ObjectID.BUOY)
+
+            # Publish buoy detection
             if len(detection_msg.detections) > 0:
                 print(f'Publishing buoy detection - {current_seq_id}')
                 self._publish_detection_marker(detection_msg, msg.header)
@@ -235,8 +246,20 @@ class SSSDetector_image_proc:
                         'confidence': 0.5
                     }}
 
-                    detection_msg = self._construct_detection_msg_and_update_detection_image(
-                        detection_res, channel_id, msg.header.stamp, detection_type=ObjectID.ROPE)
+                    if self.detector_seq_id_as_score:
+                        detection_msg = self._construct_detection_msg_and_update_detection_image(
+                            detection_res=detection_res,
+                            channel_id=channel_id,
+                            stamp=msg.header.stamp,
+                            detection_type=ObjectID.ROPE,
+                            seq_id=current_seq_id)
+                    else:
+                        detection_msg = self._construct_detection_msg_and_update_detection_image(
+                            detection_res=detection_res,
+                            channel_id=channel_id,
+                            stamp=msg.header.stamp,
+                            detection_type=ObjectID.ROPE)
+
                     if len(detection_msg.detections) > 0:
                         self.detection_pub.publish(detection_msg)
 
@@ -248,11 +271,22 @@ class SSSDetector_image_proc:
                     channel_id = Side.STARBOARD
                     detection_res = {ObjectID.ROPE: {
                         'pos': rope_index,
-                        'confidence': 0.5
+                        'confidence': 0.5  # this is overwritten if self.detector_seq_id_as_score
                     }}
+                    if self.detector_seq_id_as_score:
+                        detection_msg = self._construct_detection_msg_and_update_detection_image(
+                            detection_res=detection_res,
+                            channel_id=channel_id,
+                            stamp=msg.header.stamp,
+                            detection_type=ObjectID.ROPE,
+                            seq_id=current_seq_id)
+                    else:
+                        detection_msg = self._construct_detection_msg_and_update_detection_image(
+                            detection_res=detection_res,
+                            channel_id=channel_id,
+                            stamp=msg.header.stamp,
+                            detection_type=ObjectID.ROPE)
 
-                    detection_msg = self._construct_detection_msg_and_update_detection_image(
-                        detection_res, channel_id, msg.header.stamp, detection_type=ObjectID.ROPE)
                     if len(detection_msg.detections) > 0:
                         self.detection_pub.publish(detection_msg)
 
@@ -303,7 +337,7 @@ class SSSDetector_image_proc:
             print('Error converting numpy array to img msg: {}'.format(error))
 
     def _construct_detection_msg_and_update_detection_image(
-            self, detection_res, channel_id, stamp, detection_type):
+            self, detection_res, channel_id, stamp, detection_type, seq_id=None):
 
         if detection_type not in list(ObjectID):
             return Detection2DArray()
@@ -323,7 +357,10 @@ class SSSDetector_image_proc:
 
             object_hypothesis = ObjectHypothesisWithPose()
             object_hypothesis.id = object_id.value
-            object_hypothesis.score = detection['confidence']
+            if self.detector_seq_id_as_score and seq_id is not None:
+                object_hypothesis.score = seq_id
+            else:
+                object_hypothesis.score = detection['confidence']
             detection_pose = self._detection_to_pose(detection['pos'], channel_id, detection_type)
 
             # Catch Error
@@ -356,7 +393,7 @@ class SSSDetector_image_proc:
         type: rope or buoy, determines assumed depth
         return the constructed pose for the detection"""
 
-        # NOTE: The rope detection allowance is currently not being used as it was cause issues with the detections that
+        # NOTE: The rope detection allowance is currently not being used as it caused issues with the detections that
         # were being added.
 
         # rope leeway allows the detected distance to be less than the height difference

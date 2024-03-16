@@ -16,12 +16,16 @@ def main():
         robot_name = 'sam'
         print('{} param not found in param server.\n'.format(robot_name_param))
         print(f'Setting robot_name = {robot_name} (default value)')
+
     object_height = rospy.get_param('~object_height', 1.50)
     water_depth = rospy.get_param('~water_depth', 15)
+
     buoy_path = rospy.get_param('buoy_detections_path',
                                 '/home/julian/catkin_ws/src/sam_slam/processing scripts/data/image_process_buoys.csv')
+
     rope_port_path = rospy.get_param('rope_port_detections_path',
                                      '/home/julian/catkin_ws/src/sam_slam/processing scripts/data/image_process_ropes_port.csv')
+
     rope_star_path = rospy.get_param('rope_star_detections_path',
                                      '/home/julian/catkin_ws/src/sam_slam/processing scripts/data/image_process_ropes_star.csv')
 
